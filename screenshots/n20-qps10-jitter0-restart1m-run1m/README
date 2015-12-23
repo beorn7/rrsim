@@ -1,0 +1,5 @@
+As there is no jitter in scrape intervals, median and average rate
+implementations show no difference.
+
+rate-average-half-30s.png: Bottom line in upper graph is 199.03.
+
