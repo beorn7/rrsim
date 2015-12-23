@@ -38,9 +38,8 @@ var (
 	)
 )
 
-func waitDuration() time.Duration {
-	waitNs := 1e9 * (rand.NormFloat64()**jitter + 1) / *qps
-	return time.Duration(waitNs)
+func waitDurationNs() float64 {
+	return 1e9 * (rand.NormFloat64()**jitter + 1) / *qps
 }
 
 func runTask(id, batch int, duration time.Duration) {
@@ -59,14 +58,14 @@ func runTask(id, batch int, duration time.Duration) {
 	defer prometheus.Unregister(cnt)
 
 	stopTimer := time.NewTimer(duration)
-	queryTimer := time.NewTimer(waitDuration() / 2)
+	queryTimer := time.NewTimer(time.Duration(waitDurationNs() * rand.Float64()))
 	for {
 		select {
 		case <-stopTimer.C:
 			return
 		case <-queryTimer.C:
 			cnt.Inc()
-			queryTimer.Reset(waitDuration())
+			queryTimer.Reset(time.Duration(waitDurationNs()))
 		}
 	}
 }
