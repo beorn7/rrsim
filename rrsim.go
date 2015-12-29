@@ -32,6 +32,10 @@ var (
 		"jitter", 0,
 		"How much the wait time between queries is randomly changed. The wait time between queries is normal-distributed with the given jitter value equaling σ/μ.",
 	)
+	loss = flag.Float64(
+		"loss", 0,
+		"Relative amount of lost scrapes. This is simulated by removing a counter from the exposed metrics for 1s now and then.",
+	)
 	addr = flag.String(
 		"addr", ":8080",
 		"The address to bind to (for exposition of the /metric HTTP endpoint).",
@@ -56,9 +60,13 @@ func runTask(id, batch int, duration time.Duration) {
 	})
 	prometheus.MustRegister(cnt)
 	defer prometheus.Unregister(cnt)
+	registered := true
 
 	stopTimer := time.NewTimer(duration)
 	queryTimer := time.NewTimer(time.Duration(waitDurationNs() * rand.Float64()))
+	lossTicker := time.NewTicker(time.Second)
+	defer lossTicker.Stop()
+
 	for {
 		select {
 		case <-stopTimer.C:
@@ -66,6 +74,14 @@ func runTask(id, batch int, duration time.Duration) {
 		case <-queryTimer.C:
 			cnt.Inc()
 			queryTimer.Reset(time.Duration(waitDurationNs()))
+		case <-lossTicker.C:
+			if rand.Float64() < *loss && registered {
+				prometheus.Unregister(cnt)
+				registered = false
+			} else if !registered {
+				prometheus.MustRegister(cnt)
+				registered = true
+			}
 		}
 	}
 }
