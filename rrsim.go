@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
@@ -39,6 +40,14 @@ var (
 	addr = flag.String(
 		"addr", ":8080",
 		"The address to bind to (for exposition of the /metric HTTP endpoint).",
+	)
+	enableOpenMetrics = flag.Bool(
+		"enable-openmetrics", false,
+		"Enable OpenMetrics encoding in the /metrics endpoint.",
+	)
+	enableOpenMetricsCreated = flag.Bool(
+		"enable-openmetrics-created", false,
+		"Enable _created suffix timestamps in OpenMetrics output.",
 	)
 )
 
@@ -89,7 +98,13 @@ func runTask(id, batch int, duration time.Duration) {
 func main() {
 	flag.Parse()
 
-	http.Handle("/metrics", prometheus.Handler())
+	http.Handle("/metrics", promhttp.HandlerFor(
+		prometheus.DefaultGatherer,
+		promhttp.HandlerOpts{
+			EnableOpenMetrics:                   *enableOpenMetrics,
+			EnableOpenMetricsTextCreatedSamples: *enableOpenMetricsCreated,
+		},
+	))
 	go http.ListenAndServe(*addr, nil)
 
 	batch := 0
