@@ -55,7 +55,7 @@ func waitDurationNs() float64 {
 	return 1e9 * (rand.NormFloat64()**jitter + 1) / *qps
 }
 
-func runTask(id, batch int, duration time.Duration) {
+func runTask(id, batch int, duration time.Duration, reg prometheus.Registerer) {
 	log.Printf("Starting task %d of batch %d.\n", id, batch)
 	defer log.Printf("Stopping task %d of batch %d.\n", id, batch)
 
@@ -64,11 +64,10 @@ func runTask(id, batch int, duration time.Duration) {
 		Help: "Number of (simulated) queries the task has served.",
 		ConstLabels: prometheus.Labels{
 			"batch": fmt.Sprint(batch),
-			"task":  fmt.Sprint(id),
 		},
 	})
-	prometheus.MustRegister(cnt)
-	defer prometheus.Unregister(cnt)
+	reg.MustRegister(cnt)
+	defer reg.Unregister(cnt)
 	registered := true
 
 	stopTimer := time.NewTimer(duration)
@@ -85,10 +84,10 @@ func runTask(id, batch int, duration time.Duration) {
 			queryTimer.Reset(time.Duration(waitDurationNs()))
 		case <-lossTicker.C:
 			if rand.Float64() < *loss && registered {
-				prometheus.Unregister(cnt)
+				reg.Unregister(cnt)
 				registered = false
 			} else if !registered {
-				prometheus.MustRegister(cnt)
+				reg.MustRegister(cnt)
 				registered = true
 			}
 		}
@@ -98,28 +97,38 @@ func runTask(id, batch int, duration time.Duration) {
 func main() {
 	flag.Parse()
 
-	http.Handle("/metrics", promhttp.HandlerFor(
-		prometheus.DefaultGatherer,
-		promhttp.HandlerOpts{
-			EnableOpenMetrics:                   *enableOpenMetrics,
-			EnableOpenMetricsTextCreatedSamples: *enableOpenMetricsCreated,
-		},
-	))
-	go http.ListenAndServe(*addr, nil)
+	regs := make([]*prometheus.Registry, *num)
+	for i := range regs {
+		regs[i] = prometheus.NewRegistry()
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.HandlerFor(
+			regs[i],
+			promhttp.HandlerOpts{
+				EnableOpenMetrics:                   *enableOpenMetrics,
+				EnableOpenMetricsTextCreatedSamples: *enableOpenMetricsCreated,
+			},
+		))
+		addr := fmt.Sprintf(":8%03d", i+80) // TODO: Ugly! Make configurabe through CLI.
+		go http.ListenAndServe(addr, mux)
+	}
 
 	batch := 0
 
 	// First start one batch of already running tasks.
-	for i := 0; i < *num; i++ {
-		go runTask(i, batch, *runDuration+*restartDuration*time.Duration(i)/time.Duration(*num))
+	for i, reg := range regs {
+		go runTask(
+			i, batch,
+			*runDuration+*restartDuration*time.Duration(i)/time.Duration(*num),
+			reg,
+		)
 	}
 
 	for {
 		time.Sleep(*runDuration)
 		batch++
 		log.Printf("Initiating restart batch %d.\n", batch)
-		for i := 0; i < *num; i++ {
-			go runTask(i, batch, *runDuration+*restartDuration)
+		for i, reg := range regs {
+			go runTask(i, batch, *runDuration+*restartDuration, reg)
 			time.Sleep(*restartDuration / time.Duration(*num))
 		}
 		log.Printf("Restart batch %d complete.\n", batch)
